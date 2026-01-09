@@ -1500,10 +1500,23 @@ std::pair<int64,int64> parseBitsParameter(const char * param)
 #ifdef __linux__
 FILE * tryOpen(const char * path, const char * mode)
 {
+    // SDL330: Check for symlinks before opening
+    struct stat st;
+    if (lstat(path, &st) == 0 && S_ISLNK(st.st_mode)) {
+        std::cerr << "SDL330 SECURITY: Symlink detected at " << path << " - rejecting file access\n";
+        return nullptr;
+    }
+    
     FILE * f = fopen(path, mode);
     if (!f)
     {
-        f = fopen((std::string("/pcm") + path).c_str(), mode);
+        const std::string alt_path = std::string("/pcm") + path;
+        // SDL330: Check for symlinks on alternate path too
+        if (lstat(alt_path.c_str(), &st) == 0 && S_ISLNK(st.st_mode)) {
+            std::cerr << "SDL330 SECURITY: Symlink detected at " << alt_path << " - rejecting file access\n";
+            return nullptr;
+        }
+        f = fopen(alt_path.c_str(), mode);
     }
     return f;
 }

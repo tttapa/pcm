@@ -314,6 +314,13 @@ namespace PCMDaemon {
         }
 
         //Store shm id in a file (shmIdLocation_)
+        // SDL330: Check for symlinks BEFORE attempting to remove
+        struct stat st;
+        if (lstat(shmIdLocation_.c_str(), &st) == 0 && S_ISLNK(st.st_mode)) {
+            std::cerr << "SDL330 CRITICAL: Symlink detected at shared memory id location: " << shmIdLocation_ << "\n";
+            exit(EXIT_FAILURE);
+        }
+
         int success = remove(shmIdLocation_.c_str());
         if (success != 0)
         {
