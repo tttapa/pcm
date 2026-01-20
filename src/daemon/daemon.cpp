@@ -7,6 +7,7 @@
 #include <cstring>
 #include <algorithm>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
@@ -313,24 +314,30 @@ namespace PCMDaemon {
             exit(EXIT_FAILURE);
         }
 
-        //Store shm id in a file (shmIdLocation_)
-        // SDL330: Check for symlinks BEFORE attempting to remove
-        struct stat st;
-        if (lstat(shmIdLocation_.c_str(), &st) == 0 && S_ISLNK(st.st_mode)) {
-            std::cerr << "SDL330 CRITICAL: Symlink detected at shared memory id location: " << shmIdLocation_ << "\n";
-            exit(EXIT_FAILURE);
-        }
-
-        int success = remove(shmIdLocation_.c_str());
-        if (success != 0)
+        // Store shm id in a file (shmIdLocation_)
+        int success = unlink(shmIdLocation_.c_str());
+        if (success != 0 && errno != ENOENT)
         {
             std::cerr << "Failed to delete shared memory id location: " << shmIdLocation_ << " (errno=" << errno << ")\n";
         }
 
-        FILE* fp = fopen(shmIdLocation_.c_str(), "w");
+        // SDL330: atomic file creation with symlink protection
+        int fd = open(shmIdLocation_.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0660);
+        if (fd < 0)
+        {
+            if (errno == EEXIST) {
+                std::cerr << "SDL330 CRITICAL: File unexpectedly exists at shared memory id location (possible race condition/symlink attack): " << shmIdLocation_ << "\n";
+            } else {
+                std::cerr << "Failed to create shared memory key location: " << shmIdLocation_ << " (errno=" << errno << ")\n";
+            }
+            exit(EXIT_FAILURE);
+        }
+
+        FILE* fp = fdopen(fd, "w");
         if (!fp)
         {
-            std::cerr << "Failed to create/write to shared memory key location: " << shmIdLocation_ << "\n";
+            close(fd);
+            std::cerr << "Failed to open stream for shared memory key location: " << shmIdLocation_ << "\n";
             exit(EXIT_FAILURE);
         }
         fprintf(fp, "%i", sharedMemoryId_);
