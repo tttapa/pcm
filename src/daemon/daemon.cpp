@@ -318,7 +318,8 @@ namespace PCMDaemon {
         // SDL330: Atomic file creation with symlink protection
         // Try O_EXCL first, unlink and retry only if needed (avoids TOCTOU race)
         int fd = -1;
-        for (int attempt = 0; attempt < 3 && fd < 0; ++attempt) {
+        constexpr int MAX_FILE_CREATION_RETRIES = 3;
+        for (int attempt = 0; attempt < MAX_FILE_CREATION_RETRIES && fd < 0; ++attempt) {
             fd = open(shmIdLocation_.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0660);
             if (fd >= 0) break;
 
@@ -361,7 +362,7 @@ namespace PCMDaemon {
             shmData.shm_perm.gid = gid;
             shmData.shm_perm.mode = mode;
 
-            success = shmctl(sharedMemoryId_, IPC_SET, &shmData);
+            int success = shmctl(sharedMemoryId_, IPC_SET, &shmData);
             if (success < 0)
             {
                 std::cerr << "Failed to IPC_SET (errno=" << errno << ")\n";
@@ -773,7 +774,7 @@ namespace PCMDaemon {
             else
             {
                 // Delete segment
-                success = shmctl(sharedMemoryId_, IPC_RMID, NULL);
+                int success = shmctl(sharedMemoryId_, IPC_RMID, NULL);
                 if (success != 0)
                 {
                     std::cerr << "Failed to delete the shared memory segment (errno=" << errno << ")\n";
