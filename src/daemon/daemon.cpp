@@ -315,21 +315,31 @@ namespace PCMDaemon {
         }
 
         // Store shm id in a file (shmIdLocation_)
-        int success = unlink(shmIdLocation_.c_str());
-        if (success != 0 && errno != ENOENT)
-        {
-            std::cerr << "Failed to delete shared memory id location: " << shmIdLocation_ << " (errno=" << errno << ")\n";
-        }
+        // SDL330: Atomic file creation with symlink protection
+        // Try O_EXCL first, unlink and retry only if needed (avoids TOCTOU race)
+        int fd = -1;
+        for (int attempt = 0; attempt < 3 && fd < 0; ++attempt) {
+            fd = open(shmIdLocation_.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0660);
+            if (fd >= 0) break;
 
-        // SDL330: atomic file creation with symlink protection
-        int fd = open(shmIdLocation_.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0660);
-        if (fd < 0)
-        {
-            if (errno == EEXIST) {
-                std::cerr << "SDL330 CRITICAL: File unexpectedly exists at shared memory id location (possible race condition/symlink attack): " << shmIdLocation_ << "\n";
-            } else {
-                std::cerr << "Failed to create shared memory key location: " << shmIdLocation_ << " (errno=" << errno << ")\n";
+            if (errno == ELOOP) {
+                std::cerr << "SDL330 CRITICAL: Symlink detected at " << shmIdLocation_ << "\n";
+                exit(EXIT_FAILURE);
             }
+            if (errno == EEXIST) {
+                // File exists from previous run - unlink and retry
+                if (unlink(shmIdLocation_.c_str()) != 0 && errno != ENOENT) {
+                    std::cerr << "Failed to delete stale shared memory id file: " << shmIdLocation_ << "\n";
+                    exit(EXIT_FAILURE);
+                }
+                continue;  // retry
+            }
+            // Other error
+            std::cerr << "Failed to create shared memory key location: " << shmIdLocation_ << " (errno=" << errno << ")\n";
+            exit(EXIT_FAILURE);
+        }
+        if (fd < 0) {
+            std::cerr << "SDL330 CRITICAL: Unable to create shared memory file after retries (possible attack): " << shmIdLocation_ << "\n";
             exit(EXIT_FAILURE);
         }
 
