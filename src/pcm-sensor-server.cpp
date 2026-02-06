@@ -323,21 +323,21 @@ public:
         CoreCounterState ccs;
         if ( nullptr == ag.get() )
             return ccs;
-        return std::move( ag->coreCounterStates()[tid] );
+        return ag->coreCounterStates()[tid];
     }
 
     SocketCounterState const getSocketCounter( std::shared_ptr<Aggregator> ag, uint32 sid ) const {
         SocketCounterState socs;
         if ( nullptr == ag.get() )
             return socs;
-        return std::move( ag->socketCounterStates()[sid] );
+        return ag->socketCounterStates()[sid];
     }
 
     SystemCounterState getSystemCounter( std::shared_ptr<Aggregator> ag ) const {
         SystemCounterState sycs;
         if ( nullptr == ag.get() )
             return sycs;
-        return std::move( ag->systemCounterState() );
+        return ag->systemCounterState();
     }
 
 
@@ -654,21 +654,21 @@ public:
         CoreCounterState ccs;
         if ( nullptr == ag.get() )
             return ccs;
-        return std::move( ag->coreCounterStates()[tid] );
+        return ag->coreCounterStates()[tid];
     }
 
     SocketCounterState const getSocketCounter( std::shared_ptr<Aggregator> ag, uint32 sid ) const {
         SocketCounterState socs;
         if ( nullptr == ag.get() )
             return socs;
-        return std::move( ag->socketCounterStates()[sid] );
+        return ag->socketCounterStates()[sid];
     }
 
     SystemCounterState getSystemCounter( std::shared_ptr<Aggregator> ag ) const {
         SystemCounterState sycs;
         if ( nullptr == ag.get() )
             return sycs;
-        return std::move( ag->systemCounterState() );
+        return ag->systemCounterState();
     }
 
     virtual void dispatch( HyperThread* ht ) override {
