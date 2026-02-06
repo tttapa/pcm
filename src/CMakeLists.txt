@@ -1,277 +1,193 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2022-2025, Intel Corporation
 
-include(FindOpenSSL)
-
 # All pcm-* executables
-set(PROJECT_NAMES pcm pcm-numa pcm-latency pcm-power pcm-msr pcm-memory pcm-tsx pcm-pcie pcm-core pcm-iio pcm-pcicfg pcm-mmio pcm-tpmi pcm-raw pcm-accel pcm-sensor-server)
-
-set(MINIMUM_OPENSSL_VERSION 1.1.1)
-
-file(GLOB COMMON_SOURCES pcm-accel-common.cpp msr.cpp cpucounters.cpp pci.cpp mmio.cpp tpmi.cpp pmt.cpp bw.cpp utils.cpp topology.cpp debug.cpp threadpool.cpp uncore_pmu_discovery.cpp pcm-iio-pmu.cpp pcm-iio-topology.cpp lspci.cpp dashboard.cpp ${PCM_PUGIXML_CPP})
-
-if (NOT APPLE)
-  file(GLOB UNIX_SOURCES resctrl.cpp)
-endif()
-
-if (LINUX)
-    if(EXISTS "/etc/os-release") #  AND IS_READABLE "/etc/os-release" (3.29 cmake required :-( )
-      file(STRINGS "/etc/os-release" OS_RELEASE_CONTENTS)
-      foreach(LINE ${OS_RELEASE_CONTENTS})
-          if(LINE MATCHES "^ID=")
-              string(REGEX REPLACE "^ID=\"?\([a-zA-Z]+\)\"?" "\\1" OS_ID ${LINE})
-          endif()
-      endforeach()
-      message(STATUS "Detected Linux distribution: ${OS_ID}")
-    else()
-      message(STATUS "Unable to read /etc/os-release")
-    endif()
-endif()
-
-if(NOT PCM_NO_ASAN)
-    if(OS_ID STREQUAL "centos")
-        set(PCM_NO_STATIC_LIBASAN ON)
-        message(STATUS "CentOS detected, using dynamic libasan")
-    endif()
-    if(OS_ID STREQUAL "arch")
-        set(PCM_NO_STATIC_LIBASAN ON)
-        message(STATUS "arch Linux detected, using dynamic libasan")
-    endif()
-endif()
-
-if(UNIX)  # LINUX, FREE_BSD, APPLE
-    if (NOT APPLE)
-      set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS} -s")  # --strip-unneeded for packaging
-    endif()
+set(PROJECT_NAMES
+    pcm pcm-numa pcm-latency pcm-power pcm-msr pcm-memory pcm-tsx pcm-pcie
+    pcm-core pcm-iio pcm-pcicfg pcm-mmio pcm-tpmi pcm-raw pcm-accel
+    pcm-sensor-server)
+if (UNIX)
     list(APPEND PROJECT_NAMES pcm-sensor)
+endif()
 
+# Source files
+set(PCM_SOURCES
+    pcm-accel-common.cpp msr.cpp cpucounters.cpp pci.cpp mmio.cpp tpmi.cpp
+    pmt.cpp bw.cpp utils.cpp topology.cpp debug.cpp threadpool.cpp
+    uncore_pmu_discovery.cpp pcm-iio-pmu.cpp pcm-iio-topology.cpp lspci.cpp
+    dashboard.cpp)
+if (UNIX AND NOT APPLE)
+    list(APPEND PCM_SOURCES resctrl.cpp)
+endif()
+if (MSVC)
+    list(APPEND PCM_SOURCES winpmem/winpmem.cpp)
+endif()
+
+# Flags and dependencies
+add_library(pcm-core-flags INTERFACE)
+if(FREE_BSD)
+    target_link_libraries(pcm-core-flags INTERFACE execinfo)  # needed by utils
+endif()
+target_link_libraries(pcm-core-flags INTERFACE pcm-pugixml)
+target_link_libraries(pcm-core-flags INTERFACE pcm-private-flags pcm-hardening-flags)
+
+# Headers
+add_library(pcm-headers INTERFACE)
+target_sources(pcm-headers INTERFACE FILE_SET HEADERS
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+    FILES uncore_pmu_discovery.h mmio.h pmt.h favicon.ico.h resctrl.h
+          topology.h msr.h cpuasynchcounter.h pcm-iio-topology.h dashboard.h
+          cpucounters.h mutex.h pci.h debug.h topologyentry.h threadpool.h
+          exceptions/unsupported_processor_exception.hpp lspci.h tpmi.h types.h
+          bw.h pcm-accel-common.h pcm-pcie.h version.h width_extender.h pcm-iio-pmu.h)
+target_link_libraries(pcm-headers INTERFACE pcm-public-flags)
+
+if (UNIX)  # LINUX, FREE_BSD, APPLE
     # libpcm.a
-    add_library(PCM_STATIC STATIC ${COMMON_SOURCES} ${UNIX_SOURCES})
-    set_target_properties(PCM_STATIC PROPERTIES OUTPUT_NAME pcm)
+    add_library(pcm-static STATIC ${PCM_SOURCES})
+    add_library(PCM_STATIC ALIAS pcm-static) # backwards compatibility
+    set_target_properties(pcm-static PROPERTIES OUTPUT_NAME pcm)
+    target_link_libraries(pcm-static PRIVATE pcm-core-flags PUBLIC pcm-headers)
 
     # libpcm.a with -DPCM_SILENT for Release*
-    add_library(PCM_STATIC_SILENT STATIC ${COMMON_SOURCES} ${UNIX_SOURCES})
-    target_compile_definitions(PCM_STATIC_SILENT PRIVATE
-      $<$<CONFIG:Release>:PCM_SILENT>
-      $<$<CONFIG:MinSizeRel>:PCM_SILENT>
-      $<$<CONFIG:RelWithDebInfo>:PCM_SILENT>
-    )
-
-    set_target_properties(PCM_STATIC PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    set_target_properties(PCM_STATIC_SILENT PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    add_library(pcm-static-silent STATIC ${PCM_SOURCES})
+    add_library(PCM_STATIC_SILENT ALIAS pcm-static-silent)
+    set_target_properties(pcm-static-silent PROPERTIES OUTPUT_NAME pcm-silent)
+    set(PCM_SILENT_DEF $<$<CONFIG:Release,MinSizeRel,RelWithDebInfo>:PCM_SILENT>)
+    target_compile_definitions(pcm-static-silent PRIVATE ${PCM_SILENT_DEF})
+    target_link_libraries(pcm-static-silent PRIVATE pcm-core-flags PUBLIC pcm-headers)
 
     # libpcm.so
-    add_library(PCM_SHARED SHARED pcm-core.cpp)
-    target_compile_options(PCM_SHARED PRIVATE -DPCM_SHARED_LIBRARY=1)
+    add_library(pcm-lib SHARED pcm-core.cpp)
+    add_library(PCM_SHARED ALIAS pcm-lib) # backwards compatibility
+    set_target_properties(pcm-lib PROPERTIES OUTPUT_NAME pcm)
+    target_compile_definitions(pcm-lib PRIVATE PCM_SHARED_LIBRARY)
     # PCM_SILENT in Release* for pcm-core.cpp
-    target_compile_definitions(PCM_SHARED PRIVATE
-      $<$<CONFIG:Release>:PCM_SILENT>
-      $<$<CONFIG:MinSizeRel>:PCM_SILENT>
-      $<$<CONFIG:RelWithDebInfo>:PCM_SILENT>
-    )
+    target_compile_definitions(pcm-lib PRIVATE ${PCM_SILENT_DEF})
+    target_link_libraries(pcm-lib PRIVATE pcm-pugixml)
+    target_link_libraries(pcm-lib PRIVATE pcm-private-flags pcm-hardening-flags)
+    target_link_libraries(pcm-lib PUBLIC pcm-headers)
 
-    if(PCM_NO_ASAN)
-        set(PCM_DYNAMIC_ASAN "")
-        set(PCM_STATIC_ASAN "")
-    else()
-        if(PCM_NO_STATIC_LIBASAN)
-            message(STATUS "Using dynamic libasan")
-            set(PCM_DYNAMIC_ASAN "asan")
-            set(PCM_STATIC_ASAN "")
-        else()
-            set(PCM_DYNAMIC_ASAN "")
-            set(PCM_STATIC_ASAN "-static-libasan")
-            message(STATUS "Using static libasan")
-            message(STATUS "To use dynamic libasan, use -DPCM_NO_STATIC_LIBASAN=1 option (required for CentOS and arch Linux)")
-        endif()
-    endif()
-
-    if(APPLE)
+    if (APPLE)
         add_subdirectory(MacMSRDriver)
+        # TODO: check why the comment below was added and fix it
         include_directories("${CMAKE_SOURCE_DIR}/src/MacMSRDriver") # target_include_directories doesn't work
-        target_link_libraries(PCM_SHARED PRIVATE PCM_STATIC_SILENT PcmMsr Threads::Threads)
-    elseif(LINUX)
-        target_link_libraries(PCM_SHARED PRIVATE PCM_STATIC_SILENT Threads::Threads "${PCM_DYNAMIC_ASAN}")
+        target_link_libraries(pcm-lib PRIVATE pcm-static-silent PcmMsr Threads::Threads)
     else()
-        target_link_libraries(PCM_SHARED PRIVATE PCM_STATIC_SILENT Threads::Threads)
+        target_link_libraries(pcm-lib PRIVATE pcm-static-silent Threads::Threads)
     endif()
-    set_target_properties(PCM_SHARED PROPERTIES OUTPUT_NAME pcm)
-endif()
+endif(UNIX)
 
-if(MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /O2 /wd4251 /wd4273 /EHa /Zi /GS /Gy")
-    add_definitions(/W3)
-    # SDL429 security flags: ASLR (/DYNAMICBASE) and DEP (/NXCOMPAT)
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DYNAMICBASE /NXCOMPAT")
-    # Optional Spectre mitigation for newer MSVC versions
-    if(MSVC_TOOLSET_VERSION GREATER_EQUAL 141)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Qspectre")
-    endif()
-
+if (MSVC)
     # windows/* files -> PCM_STATIC
-    file(GLOB WINDOWS_SOURCES winpmem/winpmem.cpp windows/stdafx.cpp freegetopt/getopt.cpp)
-    add_library(PCM_STATIC STATIC ${COMMON_SOURCES} ${WINDOWS_SOURCES})
-    target_compile_definitions(PCM_STATIC PRIVATE UNICODE _UNICODE _CONSOLE)
-    if(PCM_NO_STATIC_MSVC_RUNTIME_LIBRARY)
-        set(PCM_MSVC_RUNTIME_LIBRARY_OPTIONS "")
-    else()
-        set(PCM_MSVC_RUNTIME_LIBRARY_OPTIONS "/MT$<$<CONFIG:Debug>:d>")
-        message(STATUS "Using static MSVC runtime library")
-        message(STATUS "To use default/dynamic MSVC runtime library, use -DNO_STATIC_MSVC_RUNTIME_LIBRARY=1 option")
-    endif()
-    target_compile_options(PCM_STATIC PRIVATE "${PCM_MSVC_RUNTIME_LIBRARY_OPTIONS}")
+    add_library(pcm-static STATIC ${PCM_SOURCES} windows/stdafx.cpp freegetopt/getopt.cpp)
+    add_library(PCM_STATIC ALIAS pcm-static)
+    target_compile_definitions(pcm-static PRIVATE _CONSOLE)
+    target_link_libraries(pcm-static PRIVATE pcm-core-flags PUBLIC pcm-headers)
 
     # Graphical perfmon front-end: pcm-lib, pcm-service
-    # Files: COMMON_FILES() + pcm-lib.cpp winpmem\winpmem.cpp dllmain.cpp
-    file(GLOB PCM_LIB_SOURCES winpmem/winpmem.cpp dllmain.cpp pcm-lib.cpp )
-    add_library(pcm-lib SHARED ${COMMON_SOURCES} ${PCM_LIB_SOURCES})
-    target_compile_definitions(pcm-lib PRIVATE _WINDOWS _USRDLL PCM_EXPORTS _WINDLL _UNICODE UNICODE)
-    target_compile_options(pcm-lib PRIVATE "${PCM_MSVC_RUNTIME_LIBRARY_OPTIONS}")
+    add_library(pcm-lib SHARED ${PCM_SOURCES} dllmain.cpp pcm-lib.cpp)
+    set_target_properties(pcm-lib PROPERTIES OUTPUT_NAME pcm-lib)
+    target_compile_definitions(pcm-lib PRIVATE _WINDOWS _USRDLL PCM_EXPORTS _WINDLL)
+    target_link_libraries(pcm-lib PRIVATE pcm-core-flags PUBLIC pcm-headers)
 
     # Pcm-service files: PCM_SHARED + AssemblyInfo.cpp PCMInstaller.cpp PCMService.cpp
-    file(GLOB PCM_SERVICE_SOURCES windows/PCMInstaller.cpp  windows/PCMService.cpp windows/AssemblyInfo.cpp winddows/utils.cpp)
-    add_executable(pcm-service ${PCM_SERVICE_SOURCES})
-    target_compile_definitions(pcm-service PRIVATE _UNICODE UNICODE _CONSOLE)
+    add_executable(pcm-service windows/PCMInstaller.cpp windows/PCMService.cpp windows/AssemblyInfo.cpp)
+    target_compile_definitions(pcm-service PRIVATE _CONSOLE)
     set_target_properties(pcm-service PROPERTIES LINK_FLAGS "/INCREMENTAL:NO" COMMON_LANGUAGE_RUNTIME "")
     set_property(TARGET pcm-service PROPERTY VS_DOTNET_REFERENCES "System;System.Configuration.Install;System.Data;System.Management;System.ServiceProcess;System.Xml")
-    target_link_libraries(pcm-service pcm-lib)
-
+    target_link_libraries(pcm-service PRIVATE pcm-lib)
+    target_link_libraries(pcm-service PRIVATE pcm-private-flags pcm-hardening-flags)
 endif(MSVC)
 
-#######################
-# SIMDJSON dependency
-#######################
+if (PCM_BUILD_EXECUTABLES)
+    foreach(PROJ_NAME ${PROJECT_NAMES})
+        add_executable(${PROJ_NAME} ${PROJ_NAME}.cpp)
+        target_link_libraries(${PROJ_NAME} PRIVATE pcm-static)
+        target_link_libraries(${PROJ_NAME} PRIVATE pcm-private-flags pcm-hardening-flags)
 
-add_library(PCM_SIMDJSON INTERFACE) # interface library for simdjson
-set(SIMDJSON_IS_APPLICABLE TRUE)    # true if simdjson can be used, default - TRUE
-
-# check simdjson support matrix - https://github.com/simdjson/simdjson/blob/master/doc/basics.md
-# > GCC 7.4, > Clang 6.0 , > MSVC 2017
-if((CMAKE_CXX_COMPILER_ID STREQUAL "GNU"   AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 7.4) OR
-    (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 6) OR
-    (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC"  AND  MSVC_TOOLSET_VERSION VERSION_LESS 141)) # corresponds to VS2017
-     message(WARNING
-           " ${CMAKE_CXX_COMPILER} ${CMAKE_CXX_COMPILER_VERSION} is incompartible with simdjson features' requirements.\n"
-           " Refer to simdjson support matrix - https://github.com/simdjson/simdjson/blob/master/doc/basics.md .\n"
-           " Parsing events from https://github.com/intel/perfmon won't be supported.")
-        set(SIMDJSON_IS_APPLICABLE FALSE)
-endif()
-
-if(SIMDJSON_IS_APPLICABLE)
-    find_package(simdjson QUIET)  # Working form Ubuntu 22.04
-    if(simdjson_FOUND)
-        message(STATUS "System SIMDJSON is used")
-        target_link_libraries(PCM_SIMDJSON INTERFACE simdjson::simdjson)
-        target_compile_definitions(PCM_SIMDJSON INTERFACE SYSTEM_SIMDJSON)
-        target_compile_definitions(PCM_SIMDJSON INTERFACE PCM_SIMDJSON_AVAILABLE)
-    else()
-        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/simdjson/singleheader/simdjson.h")
-            message(STATUS "Local SIMDJSON exists: ${CMAKE_CURRENT_SOURCE_DIR}/simdjson/singleheader/simdjson.h")
-            file(GLOB SIMDJSON_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/simdjson/singleheader/simdjson.cpp)
-            target_sources(PCM_SIMDJSON INTERFACE ${SIMDJSON_SOURCE})
-            target_include_directories(PCM_SIMDJSON INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/simdjson/singleheader)
-            target_compile_definitions(PCM_SIMDJSON INTERFACE PCM_SIMDJSON_AVAILABLE)
-        else()
-            message(WARNING
-                " ${CMAKE_CURRENT_SOURCE_DIR}/simdjson/singleheader/simdjson.h doesn't exist\n"
-                " Use `git clone --recursive` flag when cloning pcm repository to clone simdjson submodule as well or\n"
-                " update submodule with command 'git submodule update --init --recursive' or\n"
-                " run 'git clone https://github.com/simdjson/simdjson.git' in 'src' directory to get simdjson library")
+        if(PROJ_NAME STREQUAL pcm-raw)
+            target_link_libraries(${PROJ_NAME} PRIVATE pcm-simdjson)
+        elseif(PROJ_NAME STREQUAL pcm-sensor-server)
+            target_link_libraries(${PROJ_NAME} PRIVATE pcm-openssl)
+            target_sources(${PROJ_NAME} PRIVATE pcm-accel-common.cpp)
+            target_sources(${PROJ_NAME} PRIVATE FILE_SET HEADERS
+                BASE_DIRS ${CMAKE_SOURCE_DIR} FILES pcm-accel-common.h)
         endif()
-    endif(simdjson_FOUND)
-endif(SIMDJSON_IS_APPLICABLE)
-
-#######################
-# End of SIMDJSON dependency section
-#######################
-
-if(PCM_BUILD_EXECUTABLES)
-    foreach(PROJECT_NAME ${PROJECT_NAMES})
-        file(GLOB PROJECT_FILE ${PROJECT_NAME}.cpp)
-        set(LIBS PCM_STATIC)
-
-        add_executable(${PROJECT_NAME} ${PROJECT_FILE})
-
-        if(MSVC)
-            target_compile_options(${PROJECT_NAME} PRIVATE "${PCM_MSVC_RUNTIME_LIBRARY_OPTIONS}")
-        endif(MSVC)
-
-        if(UNIX)
-            set(LIBS ${LIBS} "-fPIE")
-        endif(UNIX)
-
-        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-            set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${PCM_STATIC_ASAN}")
-        endif()
-
-        # specific file for pcm-raw project
-        if(${PROJECT_NAME} STREQUAL pcm-raw)
-            set(LIBS ${LIBS} PCM_SIMDJSON)
-        endif(${PROJECT_NAME} STREQUAL pcm-raw)
-
-        if(${PROJECT_NAME} STREQUAL pcm-sensor-server)
-          if(NO_SSL)
-            message(STATUS "SSL is disabled")
-          else()
-            message(STATUS "Compiling with SSL support, requires libssl-dev or openssl-devel or libopenssl-devel or libopenssl-dev package installed")
-            message(STATUS "To disable SSL support, use -DNO_SSL=1 option")
-            find_package(OpenSSL ${MINIMUM_OPENSSL_VERSION} QUIET)
-            if(OPENSSL_FOUND)
-              message(STATUS "OpenSSL version ${OPENSSL_VERSION} >= ${MINIMUM_OPENSSL_VERSION}, OpenSSL support enabled")
-              target_compile_options(${PROJECT_NAME} PRIVATE "-DUSE_SSL")
-              set(LIBS ${LIBS} OpenSSL::SSL OpenSSL::Crypto)
-            else()
-              message(STATUS "OpenSSL support has been disabled, the version is less than ${MINIMUM_OPENSSL_VERSION}")
-            endif()
-          endif()
-          file(READ pcm-sensor-server.service.in SENSOR_SERVICE_IN)
-          string(REPLACE "@@CMAKE_INSTALL_SBINDIR@@" "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_SBINDIR}" SENSOR_SERVICE "${SENSOR_SERVICE_IN}")
-          file(WRITE "${CMAKE_BINARY_DIR}/pcm-sensor-server.service" "${SENSOR_SERVICE}")
-          file(GLOB PROJECT_FILE ${PROJECT_NAME}.cpp pcm-accel-common.h pcm-accel-common.cpp)
-          target_include_directories(pcm-sensor-server PUBLIC ${CMAKE_SOURCE_DIR})
-          if(LINUX_SYSTEMD)
-            install(FILES "${CMAKE_BINARY_DIR}/pcm-sensor-server.service" DESTINATION "${LINUX_SYSTEMD_UNITDIR}")
-          endif(LINUX_SYSTEMD)
-        endif(${PROJECT_NAME} STREQUAL pcm-sensor-server)
 
         if(LINUX OR FREE_BSD)
-            set(LIBS ${LIBS} Threads::Threads)
-            install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_SBINDIR})
-        endif(LINUX OR FREE_BSD)
+            target_link_libraries(${PROJ_NAME} PRIVATE Threads::Threads)
+        elseif(APPLE)
+            target_link_libraries(${PROJ_NAME} PRIVATE Threads::Threads PcmMsr)
+        elseif(MSVC)
+            # TODO: the comment below does not seem to be accurate
+            target_compile_definitions(${PROJ_NAME} PRIVATE _CONSOLE) # for all, except pcm-lib and pcm-service
+        endif()
+    endforeach()
+endif()
 
-        if(APPLE)
-            set(LIBS ${LIBS} Threads::Threads PcmMsr)
-            install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_SBINDIR})
-        endif(APPLE)
+if(LINUX)
+    # Daemon & client
+    add_executable(daemon "daemon/daemon.cpp" "daemon/main.cpp")
+    set_target_properties(daemon PROPERTIES OUTPUT_NAME "pcm-daemon")
+    target_link_libraries(daemon PRIVATE pcm-static Threads::Threads)
+    target_link_libraries(daemon PRIVATE pcm-private-flags pcm-hardening-flags)
 
-        if(MSVC)
-            target_compile_definitions(${PROJECT_NAME} PRIVATE _UNICODE UNICODE _CONSOLE) # for all, except pcm-lib and pcm-service
-        endif(MSVC)
-
-        target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBS})
-    endforeach(PROJECT_NAME ${PROJECT_NAMES})
-endif(PCM_BUILD_EXECUTABLES)
+    add_executable(client "client/client.cpp" "client/main.cpp")
+    set_target_properties(client PROPERTIES OUTPUT_NAME "pcm-client")
+    target_link_libraries(client PRIVATE Threads::Threads)
+    target_link_libraries(client PRIVATE pcm-private-flags pcm-hardening-flags)
+endif()
 
 #######################
 # Install
 #######################
 
-if(UNIX) # APPLE, LINUX, FREE_BSD
-    if(LINUX)
-        # Daemon & client
-        file(GLOB DAEMON_SOURCES "daemon/*.cpp")
-        add_executable(daemon ${DAEMON_SOURCES})
-        target_link_libraries(daemon PRIVATE PCM_STATIC Threads::Threads "-fPIE")
-        set_target_properties(daemon PROPERTIES OUTPUT_NAME "pcm-daemon")
-        install(TARGETS daemon DESTINATION ${CMAKE_INSTALL_SBINDIR})
+# Install executables
+if (PCM_BUILD_EXECUTABLES)
+    foreach(PROJ_NAME ${PROJECT_NAMES})
+        if(PROJ_NAME STREQUAL pcm-sensor-server)
+            if(LINUX_SYSTEMD)
+                configure_file(pcm-sensor-server.service.in ${CMAKE_BINARY_DIR}/pcm-sensor-server.service @ONLY)
+                install(FILES ${CMAKE_BINARY_DIR}/pcm-sensor-server.service DESTINATION "${LINUX_SYSTEMD_UNITDIR}")
+            endif()
+        endif()
 
-        file(GLOB CLIENT_SOURCES "client/*.cpp")
-        add_executable(client ${CLIENT_SOURCES})
-        target_link_libraries(client PRIVATE Threads::Threads "-fPIE")
-        set_target_properties(client PROPERTIES OUTPUT_NAME "pcm-client")
-        install(TARGETS client DESTINATION ${CMAKE_INSTALL_BINDIR})
-    endif(LINUX)
+        if(UNIX)
+            install(TARGETS ${PROJ_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR})
+        endif()
+        # TODO: Why no Windows install?
+    endforeach()
+endif()
 
+# Copy extra files to build directory for executables to find them in build tree
+if (PCM_BUILD_EXECUTABLES)
+    file(GLOB OPCODE_FILES "opCode*.txt")
+    foreach(opcode_file ${OPCODE_FILES})
+        add_custom_command(TARGET pcm-iio POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${opcode_file}
+                $<TARGET_FILE_DIR:pcm-iio>)
+    endforeach()
+
+    add_custom_command(TARGET pcm-raw POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
+            ${PROJECT_SOURCE_DIR}/src/PMURegisterDeclarations
+            $<TARGET_FILE_DIR:pcm-raw>/PMURegisterDeclarations)
+
+    if(MSVC)
+        add_custom_command(TARGET pcm-service POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${PROJECT_SOURCE_DIR}/src/windows/pcm-service.exe.config
+                $<TARGET_FILE_DIR:pcm-service>)
+    endif(MSVC)
+endif()
+
+if (LINUX)
+    install(TARGETS daemon client RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR})
+endif()
+
+if (UNIX) # APPLE, LINUX, FREE_BSD
     # Install extra files
     install(FILES pcm-bw-histogram.sh
             DESTINATION ${CMAKE_INSTALL_SBINDIR}
@@ -279,12 +195,9 @@ if(UNIX) # APPLE, LINUX, FREE_BSD
             PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ GROUP_EXECUTE GROUP_READ WORLD_EXECUTE WORLD_READ)
     file(GLOB OPCODE_FILES "opCode*.txt")
     foreach(opcode_file ${OPCODE_FILES})
-        get_filename_component(opcode_file_name ${opcode_file} NAME)
-        configure_file(${opcode_file} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${opcode_file_name} COPYONLY)
         install(FILES ${opcode_file} DESTINATION ${CMAKE_INSTALL_DATADIR}/pcm)
-    endforeach(opcode_file ${OPCODE_FILES})
+    endforeach()
 
-    file(COPY "PMURegisterDeclarations" DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
     install(DIRECTORY "PMURegisterDeclarations" DESTINATION ${CMAKE_INSTALL_DATADIR}/pcm)
 
     # Install docs
@@ -296,28 +209,56 @@ if(UNIX) # APPLE, LINUX, FREE_BSD
         get_filename_component(doc_file_name ${doc_file} NAME)
         configure_file(${doc_file} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${doc_file_name} COPYONLY)
         install(FILES ${doc_file} DESTINATION ${CMAKE_INSTALL_DOCDIR})
-    endforeach(doc_file ${DOC_FILES})
-
+    endforeach()
 endif(UNIX)
 
-if(MSVC)
-    file(GLOB OPCODE_FILES "opCode*.txt")
-    foreach(opcode_file ${OPCODE_FILES})
-        add_custom_command(TARGET pcm-iio POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${opcode_file}
-            $<TARGET_FILE_DIR:pcm-iio>)
-    endforeach(opcode_file ${OPCODE_FILES})
+# Library install
+include(CMakePackageConfigHelpers)
 
-    add_custom_command(TARGET pcm-raw POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_FILE_DIR:pcm-raw>/PMURegisterDeclarations")
-    add_custom_command(TARGET pcm-raw POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${PROJECT_SOURCE_DIR}/src/PMURegisterDeclarations"
-        "$<TARGET_FILE_DIR:pcm-raw>/PMURegisterDeclarations")
-    add_custom_command(TARGET pcm-service POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${PROJECT_SOURCE_DIR}/src/windows/pcm-service.exe.config"
-        $<TARGET_FILE_DIR:pcm-service>)
-endif(MSVC)
+add_library(pcm::pcm-lib ALIAS pcm-lib)
+add_library(pcm::pcm-static ALIAS pcm-static)
+add_library(pcm::pcm-static-silent ALIAS pcm-static-silent)
+install(
+    TARGETS
+        pcm-core-flags
+        pcm-headers
+        pcm-lib
+        pcm-static
+        pcm-static-silent
+        pcm-public-flags
+        pcm-private-flags
+        pcm-hardening-flags
+        pcm-pugixml
+        pcm-simdjson
+    EXPORT pcmTargets
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        COMPONENT lib
+    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        COMPONENT lib
+        NAMELINK_COMPONENT dev
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        COMPONENT dev
+    FILE_SET HEADERS DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+        COMPONENT dev)
+
+# Install the target CMake definitions
+install(EXPORT pcmTargets FILE pcmTargets.cmake
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/pcm"
+        COMPONENT ${COMP}
+        NAMESPACE pcm::)
+# Add all targets to the build tree export set
+export(EXPORT pcmTargets FILE "${PROJECT_BINARY_DIR}/pcmTargets.cmake"
+       NAMESPACE pcm::)
+# Generate the config file that includes the exports
+configure_package_config_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/pcmConfig.cmake.in"
+                              "${PROJECT_BINARY_DIR}/pcmConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/pcm"
+    NO_SET_AND_CHECK_MACRO)
+write_basic_package_version_file("${PROJECT_BINARY_DIR}/pcmConfigVersion.cmake"
+    VERSION "${PROJECT_VERSION}"
+    COMPATIBILITY SameMinorVersion)
+# Install the pcmConfig.cmake and pcmConfigVersion.cmake
+install(FILES "${PROJECT_BINARY_DIR}/pcmConfig.cmake"
+              "${PROJECT_BINARY_DIR}/pcmConfigVersion.cmake"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/pcm"
+        COMPONENT ${COMP})

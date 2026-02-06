@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=@@CMAKE_INSTALL_SBINDIR@@/pcm-sensor-server
+ExecStart=@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_SBINDIR@/pcm-sensor-server
 
 [Install]
 WantedBy=multi-user.target
