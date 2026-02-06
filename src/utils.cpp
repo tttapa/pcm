@@ -732,12 +732,12 @@ void MySystem(char * sysCmd, char ** sysArgv)
 #define UP_AND_RIGHT   char(192)
 #define UP_AND_LEFT    char(217)
 #else
-#define HORIZONTAL     u8"\u2500"
-#define VERTICAL       u8"\u2502"
-#define DOWN_AND_RIGHT u8"\u250C"
-#define DOWN_AND_LEFT  u8"\u2510"
-#define UP_AND_RIGHT   u8"\u2514"
-#define UP_AND_LEFT    u8"\u2518"
+#define HORIZONTAL     "\u2500"
+#define VERTICAL       "\u2502"
+#define DOWN_AND_RIGHT "\u250C"
+#define DOWN_AND_LEFT  "\u2510"
+#define UP_AND_RIGHT   "\u2514"
+#define UP_AND_LEFT    "\u2518"
 #endif
 
 template <class T>

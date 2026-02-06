@@ -3665,7 +3665,7 @@ void HTTPSServer::run() {
 #endif // USE_SSL
 
 // Hack needed to convert from unsigned char to signed char, favicon.h is changed to have _uc for each char
-inline constexpr signed char operator "" _uc( unsigned long long arg ) noexcept {
+inline constexpr signed char operator ""_uc( unsigned long long arg ) noexcept {
     return static_cast<signed char>(arg);
 }
 

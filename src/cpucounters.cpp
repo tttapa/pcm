@@ -3077,7 +3077,7 @@ public:
     CoreTaskQueue(int32 core)
     {
         try {
-            worker = std::thread([=]() {
+            worker = std::thread([this, core]() {
                 try {
                     TemporalThreadAffinity tempThreadAffinity(core, false);
                     std::unique_lock<std::mutex> lock(m);

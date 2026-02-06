@@ -355,12 +355,6 @@ inline std::istream & operator >> (std::istream & istr, s_expect && s)
     return istr;
 }
 
-inline std::istream & operator >> (std::istream && istr, s_expect && s)
-{
-    s.match(istr);
-    return istr;
-}
-
 inline std::pair<tm, uint64> pcm_localtime() // returns <tm, milliseconds>
 {
     const auto durationSinceEpoch = std::chrono::system_clock::now().time_since_epoch();
